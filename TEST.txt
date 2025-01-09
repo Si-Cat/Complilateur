@@ -1,0 +1,13 @@
+program example;
+var x: integer;
+begin
+    x := 10;
+    if x > 5 then
+        x := x + 1
+    else
+        x := x - 1;
+    while x < 20 do
+        x := x + 2;
+    read(x);
+    write(x);
+end.
