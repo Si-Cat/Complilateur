@@ -1,522 +1,776 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <ctype.h>
+typedef struct Unilex
+{
+    int num;
+    char* ul ;
+    char att[30];
+}Unilex;
+typedef struct symboles
+{
+    int num;
+    char att[30];
+    char* type ;
+}symboles;
+char* symbole;
+FILE *f;
+FILE *fichier;
+char mot_cle[15][20]={"program","var","integer","char","begin","if","then","else","while","do","read","readln","write","writeln","end"};
+symboles tabSem[255];
+Unilex tablesSymboles[255];
+int indiceALex=0;//taille de la tablesSymboles
+char caractere;
+int termine=0;
+int taille=0;//taille de la tab sem
+int limiteAjout=0;
 
-#define MAX_TOKEN_LENGTH 100
-#define MAX_SYMBOLS 1000
-typedef enum {
-    ID, NB, INTEGER, CHAR, BEGIN, END, IF, ELSE, WHILE, READ, WRITE, WRITELN,
-    OPREL, OPADD, OPMUL, ASSIGN, SEMICOLON, COMMA, COLON, PROGRAM, EOF_TOKEN, 
-    UNKNOWN, THEN, DO, CHAR_LITERAL  
-} TokenType;
-typedef enum {
-    TYPE_INTEGER,
-    TYPE_CHAR,
-    TYPE_ERROR
-} DataType;
-typedef struct {
-    TokenType type;
-    char lexeme[MAX_TOKEN_LENGTH];
-    DataType dataType;  
-} Token;
-typedef struct {
-    char name[MAX_TOKEN_LENGTH];
-    DataType type;
-    int isDeclared;
-} SymbolTableEntry;
-Token currentToken;
-FILE *file;
-FILE *fichierTraduction; // Fichier de traduction
-int NumLigne = 1;
-SymbolTableEntry symbolTable[MAX_SYMBOLS];
-int symbolTableSize = 0;
-Token anallex();
-void accepter(TokenType expected);
-void accepter_char(char expected);
 void P();
-void Dcl();
-void InstComposee();
-void Inst();
-void Liste_inst();
-void I();
-void Exp();
-void Exp_simple();
-void Terme();
-void Facteur();
-void initSymbolTable();
-void addSymbol(const char* name, DataType type);
-SymbolTableEntry* findSymbol(const char* name);
-DataType getExpressionType(Token* token);
-int isTypeCompatible(DataType target, DataType source);
-void semanticError(const char* message);
+void exp();
+void list_id();
+void list_inst();
+void INST();
+void inst_composee();
+void type();
+void DCL();
+void DCL1();
+void error();
+void list_id1();
+void list_inst1();
+char* exp1();
+char* exp_simple1();
+char* exp_simple();
+char* terme1();
+char* facteur();
+char* terme();
+char* analLex();
+char* chercher_type(char* nomVar);
 
-void initSymbolTable() {
-    symbolTableSize = 0;
-}
-void emettre(FILE *fichier, const char *texte) {
-    if (fichier != NULL) {
-        fprintf(fichier, "%s", texte);
-    } else {
-        fprintf(stderr, "Erreur : fichier de traduction non ouvert.\n");
+char *strconcatChaine (const char *chaine1, const char *chaine2) {
+    size_t len1 = strlen(chaine1);
+    size_t len2 = strlen(chaine2);
+    size_t lenTotal = len1 + len2 + 1;
+    char *result = (char *)malloc(lenTotal);
+    if (result == NULL) {
+        perror("Erreur lors de l'allocation de m moire");
         exit(EXIT_FAILURE);
     }
-}
-// dans cette fonction on va ajouter les variables dans la table de symboles
-void addSymbol(const char* name, DataType type) {
-    for (int i = 0; i < symbolTableSize; i++) {// strcmp  retourne 0 si deux chaine sont egales
-        if (strcmp(symbolTable[i].name, name) == 0) {
-            if (!symbolTable[i].isDeclared) {
-                symbolTable[i].type = type;
-                symbolTable[i].isDeclared = 1;
-                return;
-            }
-            semanticError("Redeclaration of variable");
-            return;
-        }
-    }
-    if (symbolTableSize < MAX_SYMBOLS) {
-        strcpy(symbolTable[symbolTableSize].name, name);
-        symbolTable[symbolTableSize].type = type;
-        symbolTable[symbolTableSize].isDeclared = 1;
-        symbolTableSize++;
-    } else {
-        semanticError("Symbol table overflow");
-    }
+    strcpy(result, chaine1);
+    strcat(result, chaine2);
+
+    return result;
 }
 
-SymbolTableEntry* findSymbol(const char* name) {
-    for (int i = 0; i < symbolTableSize; i++) {
-        if (strcmp(symbolTable[i].name, name) == 0) {
-            return &symbolTable[i];
-        }
-    }
-    return NULL;
-}
 
-void semanticError(const char* message) {
-    printf("Semantic Error: %s at line %d\n", message, NumLigne);
-    exit(1);
-}
-//semantique
-DataType getExpressionType(Token* token) {
-    SymbolTableEntry* entry;
-    switch (token->type) {
-        case NB:
-            return TYPE_INTEGER;
-        case CHAR_LITERAL:
-            return TYPE_CHAR;
-        case ID:
-            entry = findSymbol(token->lexeme);
-            if (entry == NULL) {
-                addSymbol(token->lexeme, TYPE_ERROR);
-                return TYPE_ERROR;
-            }
-            return entry->type;
-        default:
-            return TYPE_ERROR;
+void accepter(const char *T)
+{
+    if (strcmp(symbole,T) == 0)
+     {
+         symbole=analLex();
+    }
+    else
+    {   printf("Erreur de syntaxe:\" %s\" on trouve: \" %s \" \n", T,symbole);
+        exit(0);
     }
 }
-//semantique
-int isTypeCompatible(DataType target, DataType source) {
-    if (target == TYPE_ERROR || source == TYPE_ERROR)// continuer l analyse meme s y l a des erreurs de type
-        return 1; 
-
-    return (target == source);
-}
-Token anallex() {
-    Token token;
-    char c;
-    int i = 0;
-    //Ignore les espaces blancs et compte les nouvelles lignes
-    while ((c = fgetc(file)) != EOF && isspace(c)) {
-        if (c == '\n') NumLigne++;
-    }
-    // Vérifie la fin de fichier
-    if (c == EOF) {
-        token.type = EOF_TOKEN;
-        return token;
-    }
-    //lit caractere de format '@'
-    if (c == '\'') {
-        token.type = CHAR_LITERAL;
-        c = fgetc(file);
-        token.lexeme[0] = c;
-        token.lexeme[1] = '\0';
-        c = fgetc(file);  // lit caractere par caractere de fichier 
-        if (c != '\'') {
-            printf("Error at line %d: Unterminated character literal\n", NumLigne);
-            exit(1);
-        }
-        return token;
-    }
-
-    if (isalpha(c)) {
-        token.lexeme[i++] = c;
-        while ((c = fgetc(file)) != EOF && (isalnum(c) || c == '_')) {
-            token.lexeme[i++] = c;
-        }
-        token.lexeme[i] = '\0';
-        ungetc(c, file);
-
-        if (strcmp(token.lexeme, "program") == 0) token.type = PROGRAM;
-        else if (strcmp(token.lexeme, "integer") == 0) token.type = INTEGER;
-        else if (strcmp(token.lexeme, "char") == 0) token.type = CHAR;
-        else if (strcmp(token.lexeme, "begin") == 0) token.type = BEGIN;
-        else if (strcmp(token.lexeme, "end") == 0) token.type = END;
-        else if (strcmp(token.lexeme, "if") == 0) token.type = IF;
-        else if (strcmp(token.lexeme, "else") == 0) token.type = ELSE;
-        else if (strcmp(token.lexeme, "while") == 0) token.type = WHILE;
-        else if (strcmp(token.lexeme, "read") == 0) token.type = READ;
-        else if (strcmp(token.lexeme, "write") == 0) token.type = WRITE;
-        else if (strcmp(token.lexeme, "writeln") == 0) token.type = WRITELN;
-        else if (strcmp(token.lexeme, "then") == 0) token.type = THEN;
-        else if (strcmp(token.lexeme, "do") == 0) token.type = DO;
-        else token.type = ID;
-
-        return token;
-    }
-
-    if (isdigit(c)) {
-        token.lexeme[i++] = c;
-        while ((c = fgetc(file)) != EOF && isdigit(c)) {
-            token.lexeme[i++] = c;
-        }
-        token.lexeme[i] = '\0';
-        ungetc(c, file);
-        token.type = NB;
-        return token;
-    }
-
-    token.lexeme[0] = c;
-    token.lexeme[1] = '\0';
-
-switch (c) {
-    case '=':
-        token.type = OPREL;
-        break;
-    case '<':
-        c = fgetc(file);
-        if (c == '>') {
-            token.type = OPREL;
-            strcat(token.lexeme, "<>");
-        } else if (c == '=') {
-            token.type = OPREL;
-            strcat(token.lexeme, "<=");
-        } else {
-            token.type = OPREL;
-            ungetc(c, file);
-        }
-        break;
-    case '>':
-        c = fgetc(file);
-        if (c == '=') {
-            token.type = OPREL;
-            strcat(token.lexeme, ">=");
-        } else {
-            token.type = OPREL;
-            ungetc(c, file);
-        }
-        break;
-    case '+':
-        token.type = OPADD;
-        break;
-    case '-':
-        token.type = OPADD;
-        break;
-    case '|':
-        c = fgetc(file);
-        if (c == '|') {
-            token.type = OPADD;
-            strcat(token.lexeme, "||");
-        } else {
-            token.type = UNKNOWN;
-            ungetc(c, file);
-        }
-        break;
-    case '*':
-        token.type = OPMUL;
-        break;
-    case '/':
-        token.type = OPMUL;
-        break;
-    case '%':
-        token.type = OPMUL;
-        break;
-    case '&':
-        c = fgetc(file);
-        if (c == '&') {
-            token.type = OPMUL;
-            strcat(token.lexeme, "&&");
-        } else {
-            token.type = OPMUL;
-            ungetc(c, file);
-        }
-        break;
-    case ':':
-        if ((c = fgetc(file)) == '=') {
-            token.type = ASSIGN;
-            strcat(token.lexeme, "=");
-        } else {
-            token.type = COLON;
-            ungetc(c, file);
-        }
-        break;
-    case ';':
-        token.type = SEMICOLON;
-        break;
-    case ',':
-        token.type = COMMA;
-        break;
-    default:
-        token.type = UNKNOWN;
-        break;
+void P()
+{
+	symbole=analLex();
+        accepter("program");
+        accepter("id");
+        accepter(";");
+        DCL();
+        inst_composee();
+        accepter(".");
+        printf("\n compilation Correcte!");
 }
 
-    return token;
+void inst_composee()
+{
+    accepter("begin");
+    INST();
+    accepter("end");
 }
-void accepter(TokenType expected) {
-    if (currentToken.type == expected) {
-        currentToken = anallex();
-    } else {
-        printf("Syntactic Error at line %d: unexpected token '%s'\n", NumLigne, currentToken.lexeme);
-        exit(1);
+
+void DCL()
+{
+    DCL1();
+}
+
+void DCL1()
+{
+    if (strcmp(symbole, "var") == 0)
+    {
+        accepter("var");
+        list_id();
+        accepter(":");
+        ajouter_type(symbole);
+        type();
+        accepter(";");
+        DCL1();
     }
 }
 
-void accepter_char(char expected) {
-    if (currentToken.lexeme[0] == expected && currentToken.lexeme[1] == '\0') {
-        currentToken = anallex();
-    } else {
-        printf("Syntactic Error at line %d: unexpected character '%s'\n", NumLigne, currentToken.lexeme);
-        exit(1);
+void list_id()
+{
+
+    accepter("id");
+    list_id1();
+
+}
+
+
+void list_id1()
+{
+    if(strcmp(symbole,",")==0)
+    {
+        accepter(",");
+        accepter("id");
+        list_id1();
     }
 }
 
-void Dcl() {
-    if (currentToken.type == ID) {
-        char varName[MAX_TOKEN_LENGTH];
-        strcpy(varName, currentToken.lexeme);
-       
-        accepter(ID);
-        accepter(COLON);
+void type()
+{
 
-        DataType varType;
-        if (currentToken.type == INTEGER) {
-            varType = TYPE_INTEGER;
-            accepter(INTEGER);
-        } else if (currentToken.type == CHAR) {
-            varType = TYPE_CHAR;
-            accepter(CHAR);
-        } else {
-            semanticError("Invalid type declaration");
-            return;
-        }
-        addSymbol(varName, varType);
-
-        accepter(SEMICOLON);
-        Dcl();
+    if(strcmp(symbole,"integer")==0)
+        accepter("integer");
+    else
+        if (strcmp(symbole,"char")==0)
+            accepter("char");
+    else
+    {
+        printf("%s error in type\n",symbole );
     }
 }
 
-void InstComposee() {
-    accepter(BEGIN);
-    Liste_inst();  
-    accepter(END);
+
+
+void INST()
+{
+    list_inst();
 }
 
-void Inst() {
-    if (currentToken.type == ID || currentToken.type == IF ||
-        currentToken.type == WHILE || currentToken.type == READ ||
-        currentToken.type == WRITE || currentToken.type == WRITELN ||
-        currentToken.type == BEGIN) {  
-        Liste_inst();
-    }
-}
 
-void Liste_inst() {
+void list_inst()
+{
     I();
-    while (currentToken.type == SEMICOLON) {
-        accepter(SEMICOLON);
-        if (currentToken.type != END) {  
+    list_inst1();
+}
+
+
+void list_inst1()
+{
+        if(strcmp(symbole,";")==0)
+        {
+            accepter(";");
             I();
+            list_inst1();
         }
+}
+
+
+void I()
+{
+    if(strcmp(symbole,"id")==0)
+    {
+
+        accepter("id");
+        char* var1 = tablesSymboles[indiceALex-2].att;
+        if(! isdigit(var1)){
+           char* input1=strconcatChaine("valeurg @",var1);
+           emettre(input1);
+        }
+       else{
+            emettre(var1);
+       }
+        char* declaredType = chercher_type(var1);
+        accepter(":=");
+
+        char* var2 = tablesSymboles[indiceALex - 1].att;
+
+
+        char* assignedType = exp_simple();
+
+		if(! isdigit(var2)){
+            char* input2=strconcatChaine("valeurd @",var2);
+            emettre(input2);
+        }
+        else{
+                char* input2=strconcatChaine("empiler ",var2);
+                emettre(input2);
+        }
+        emettre(":=");
+        if (compatible(declaredType, assignedType) != 0)
+        {
+            printf("\n Type declar : %s diff rent de type assign :  %s \n", declaredType, assignedType);
+            exit(0);
+        }
+    }
+
+    else if(strcmp(symbole,"if")==0)
+    {
+
+        accepter("if");
+        exp();
+        accepter("then");
+        I();
+        accepter("else");
+        I();
+
+    }
+    else if(strcmp(symbole,"while")==0){
+        accepter("while");
+        exp();
+        accepter("do");
+        I();
+    }else if(strcmp(symbole,"read")==0){
+            accepter("read");
+            accepter("(");
+            accepter("id");
+            char* cara =chercher_type(tablesSymboles[indiceALex-2].att);
+            accepter(")");
+
+        }else if (strcmp(symbole,"readln")==0){
+            accepter("readln");
+            accepter("(");
+            accepter("id");
+            char* cara =chercher_type(tablesSymboles[indiceALex-2].att);
+            accepter(")");
+
+        }else if(strcmp(symbole,"write")==0)
+        {
+            accepter("write");
+             accepter("(");
+            accepter("id");
+
+            char* cara =chercher_type(tablesSymboles[indiceALex-2].att);
+            accepter(")");
+
+        }else if(strcmp(symbole,"writeln")==0)
+        {
+            accepter("writeln");
+             accepter("(");
+            accepter("id");
+            char* cara =chercher_type(tablesSymboles[indiceALex-2].att);
+            accepter(")");
+
+        }
+    }
+
+
+void exp( )
+{
+    exp_simple();
+    exp1();
+}
+
+char* exp1()
+{
+    char* type;
+    if(strcmp(symbole,"oprel")==0)
+    {
+        accepter("oprel");
+         if (!isdigit(tablesSymboles[indiceALex-1].att))
+        {
+            char* chaine=strconcatChaine("valeurd @",tablesSymboles[indiceALex-1].att);
+            emettre(chaine);
+        }
+
+        else {
+                char* chaine=strconcatChaine("empiler",tablesSymboles[indiceALex-1].att);
+                emettre(chaine);
+        }
+
+       if (!isdigit(tablesSymboles[indiceALex-3].att)){
+            char* chaine=strconcatChaine("valeurd @",tablesSymboles[indiceALex-3].att);
+
+            emettre(chaine);
+       }
+        else {
+                char* chaine=strconcatChaine("empiler",tablesSymboles[indiceALex-3].att);
+                emettre(chaine);
+        }
+
+        emettre(tablesSymboles[indiceALex-2].att);
+        if(compatible(chercher_type(tablesSymboles[indiceALex-1].att),chercher_type( tablesSymboles[indiceALex-3].att))!= 0)
+        {
+             printf("\n Type incompatible: %s %s %s \n",tablesSymboles[indiceALex-1].att,tablesSymboles[indiceALex-2].att,tablesSymboles[indiceALex-3].att);
+             exit(0);
+        }
+        exp_simple();
+    }
+    return type;
+}
+
+char* exp_simple()
+{
+    char* type = terme();
+    exp_simple1(type);
+    return type;
+}
+
+char* exp_simple1(char* inType)
+{
+    if (strcmp(symbole, "opadd") == 0)
+    {
+        accepter("opadd");
+        char* op = tablesSymboles[indiceALex - 2].att;
+        char* type = terme();
+
+        if (!isdigit(tablesSymboles[indiceALex-1].att))
+        {
+            char* chaine=strconcatChaine("valeurd @",tablesSymboles[indiceALex-1].att);
+            emettre(chaine);
+        }
+
+        else {
+                char* chaine=strconcatChaine("empiler",tablesSymboles[indiceALex-1].att);
+                emettre(chaine);
+        }
+
+       if (!isdigit(tablesSymboles[indiceALex-3].att)){
+            char* chaine=strconcatChaine("valeurd @",tablesSymboles[indiceALex-3].att);
+
+            emettre(chaine);
+       }
+        else {
+                char* chaine=strconcatChaine("empiler",tablesSymboles[indiceALex-3].att);
+                emettre(chaine);
+        }
+
+        emettre(tablesSymboles[indiceALex-2].att);
+
+        if (compatible(inType, type) != 0)
+        {
+            printf("Type incompatible in addition: %s %s %s\n", inType, op, type);
+            exit(0);
+        }
+
+        exp_simple1(inType);
     }
 }
 
-void I() {
-   
-    switch(currentToken.type) {
-        case ID:
-        case IF:
-        case WHILE:
-        case READ:
-        case WRITE:
-        case WRITELN:
-        case BEGIN:
-            break;
-        default:
-            return;  
-    }
-    if (currentToken.type == ID) {
-        char varName[MAX_TOKEN_LENGTH];
-        strcpy(varName, currentToken.lexeme);
-        SymbolTableEntry* entry = findSymbol(currentToken.lexeme);
-        if (entry == NULL) {
-            semanticError("Undeclared variable");
-            return;
+char* terme()
+{
+    char* type = facteur();
+    terme1(type);
+    return type;
+}
+
+char* terme1(char* inType)
+{
+    if (strcmp(symbole, "opmul") == 0)
+    {
+        accepter("opmul");
+        char* op = tablesSymboles[indiceALex - 2].att;
+        char* type = facteur();
+
+        if (!isdigit(tablesSymboles[indiceALex-1].att))
+        {
+            char* chainee=strconcatChaine("valeurd @",tablesSymboles[indiceALex-1].att);
+            emettre(chainee);
         }
-        DataType targetType = entry->type;
-        emettre(fichierTraduction, varName);
-        emettre(fichierTraduction, "\n");
-        accepter(ID);
-        
-        accepter(ASSIGN);
-        Token expToken = currentToken;
-        Exp_simple();
-        DataType sourceType = getExpressionType(&expToken);
-        if (!isTypeCompatible(targetType, sourceType)) {
-            semanticError("Type misaccepter in assignment");
+        else {
+                char* chainee=strconcatChaine("empiler",tablesSymboles[indiceALex-1].att);
+
+                emettre(chainee);
         }
-    }
-    else if (currentToken.type == IF) {
-         emettre(fichierTraduction, "SI VRAI\n");
-        accepter(IF);
-        Exp();  
-        accepter(THEN);
-        I();   
-        if (currentToken.type == ELSE) {
-            emettre(fichierTraduction, "ELSE\n");
-            accepter(ELSE);
-            I(); 
+
+       if (!isdigit(tablesSymboles[indiceALex-3].att))
+        {
+            char* chainee=strconcatChaine("valeurd @",tablesSymboles[indiceALex-3].att);
+            emettre(chainee);
+       }
+        else {
+                char* chainee=strconcatChaine("empiler",tablesSymboles[indiceALex-3].att);
+                emettre(chainee);
         }
-    }
-    else if (currentToken.type == WHILE) {
-         emettre(fichierTraduction, " WHILE\n");
-        accepter(WHILE);
-        Exp();  
-        accepter(DO);
-        I();    
-    }
-    else if (currentToken.type == READ) {
-        accepter(READ);
-        accepter_char('(');
-        if (currentToken.type != ID) {
-            semanticError("Expected identifier in read statement");
+
+        emettre(tablesSymboles[indiceALex-2].att);
+        if (compatible(inType, type) != 0)
+        {
+            printf("Type incompatible lors de la  multiplication: %s %s %s\n", inType, op, type);
+            exit(0);
         }
-      
-        if (findSymbol(currentToken.lexeme) == NULL) {
-            semanticError("Undeclared variable in read statement");
-        }
-        accepter(ID);
-        accepter_char(')');
-    }
-    else if (currentToken.type == WRITE || currentToken.type == WRITELN) {
-        TokenType ioType = currentToken.type;
-        accepter(ioType);
-        accepter_char('(');
-        if (currentToken.type != ID) {
-            semanticError("Expected identifier in write statement");
-        }
-     
-        if (findSymbol(currentToken.lexeme) == NULL) {
-            semanticError("Undeclared variable in write statement");
-        }
-        accepter(ID);
-        accepter_char(')');
-    }
-    else {
-        semanticError("Invalid instruction");
+
+        terme1(inType);
     }
 }
 
-void P() {
-    accepter(PROGRAM);
-    accepter(ID);
-    accepter(SEMICOLON);
-    Dcl();
-    InstComposee();
-    accepter_char('.');
-}
 
-void Exp() {
-    Exp_simple();
-    if (currentToken.type == OPREL) {
-        emettre(fichierTraduction, currentToken.lexeme);
-        accepter(OPREL);
-        Exp_simple();
-    }
-}
+char* afficherType(void *variable) {
 
-void Exp_simple() {
-    Terme();
-    while (currentToken.type == OPADD) {
-         emettre(fichierTraduction, currentToken.lexeme);
-        accepter(OPADD);
-        Terme();
-    }
-}
-
-void Terme() {
-    Facteur();
-    while (currentToken.type == OPMUL) {
-         emettre(fichierTraduction, currentToken.lexeme);
-        accepter(OPMUL);
-        Facteur();
-    }
-}
-
-void Facteur() {
-    if (currentToken.type == ID) {
-       
-        SymbolTableEntry* entry = findSymbol(currentToken.lexeme);
-        if (entry == NULL) {
-            semanticError("Undeclared variable");
-            return;
-        }
-        accepter(ID);
-    } else if (currentToken.type == NB) {
-        
-        accepter(NB);
-    } else if (currentToken.type == CHAR_LITERAL) {
-        accepter(CHAR_LITERAL);
-    } else if (currentToken.lexeme[0] == '(') {
-        accepter_char('(');
-        Exp_simple();
-        accepter_char(')');
+    if (*(int*)variable) {
+        return "integer";
+    } else if (*(float*)variable) {
+            return "real";
+    } else if (*(char*)variable) {
+        return "char";
     } else {
-        printf("Error at line %d: Expected identifier, number, character literal, or '(' but got '%s'\n", 
-               NumLigne, currentToken.lexeme);
-        semanticError("Invalid factor in expression");
+        return "erreur_de_type";
     }
 }
 
-int main() {
-    file = fopen("C:\\Users\\amine\\Desktop\\sfax\\test.txt", "r");
+char* facteur()
+{
+    if(strcmp(symbole,"id")==0 )
+      {
+        accepter("id");
+        char* type=chercher_type(tablesSymboles[indiceALex-2].att);
+        return type;
 
-    if (file == NULL) {
-        printf("Error: Cannot open file 'test.txt'\n");
-        return 1;
+      } else
+      if(strcmp(symbole,"nb")==0){
+       {
+            accepter("nb");
+            char* type=afficherType(tablesSymboles[indiceALex-2].att);
+            return type;
+       }
+    }
+    else
+    if (strcmp(symbole,"(")==0)
+    {
+        accepter("(");
+        exp_simple();
+        accepter(")");
+    }
+     return "";
+
+
+
+}
+
+
+
+
+
+
+
+void ajouterTableSymboles(char* ul)
+{
+    tablesSymboles[indiceALex].ul= ul ;
+    tablesSymboles[indiceALex].num=indiceALex;
+    indiceALex++;
+}
+
+void erreur(char* erreurMsg)
+{
+    termine=1;
+    printf("Erreur !! %s\n",erreurMsg);
+}
+void reculer(int a)
+{
+    fseek(f, -a, SEEK_CUR);
+
+}
+void supprimerEspaces(char *chaine) {
+    int i, j = 0;
+
+    for (i = 0; chaine[i] != '\0'; i++) {
+        if (chaine[i] != ' '&& chaine[i] != '\t' ) {
+            chaine[j++] = chaine[i];
+        }
+    }
+    chaine[j] = '\0';
+}
+int RangerId(char* lexeme)
+{int i;
+    supprimerEspaces(lexeme);
+    for ( i=0;i<15;i++)
+    {
+
+        if(strcmp(mot_cle[i],lexeme)==0)
+        {
+            return 0;
+        }
+
+    }
+    return 1;
+}
+
+char* uniLexId(char* lexeme)
+{
+
+    supprimerEspaces(lexeme);
+    if (RangerId(lexeme) != 0)//si n'est pas un mot cl 
+        return "id";
+    else
+        return lexeme;
+
+
+}
+
+
+
+
+void carsuivant()
+{
+    caractere=fgetc(f);
+    int len = strlen(tablesSymboles[indiceALex].att);
+    if(caractere != '\n' )
+        tablesSymboles[indiceALex].att[len]=caractere;
     }
 
 
-    initSymbolTable();
+char* analLex()
+{
+    int etat=0;
+    while(1)
+    {
+        switch(etat)
+        {
+            case 0 :
+                carsuivant();
+                if(isalpha(caractere)){etat=1;}
+                else if (isdigit(caractere)){etat=3;}
+                 else if(caractere==':'){etat=24;}
+                 else if(caractere==','){etat=29;}
+                 else if(caractere=='\t' ||caractere==' ' || caractere=='\n' ){etat=0;}
+                 else if(caractere==';') {etat=25;}
+                 else if(caractere=='.'){etat=26;}
+                 else if (caractere=='+'){etat=5;}
+                 else if (caractere=='-'){etat=6;}
+                 else if (caractere=='|'){etat=7;}
+                 else if (caractere=='='){etat=8;}
+                 else if (caractere=='<'){etat=9;}
+                 else if (caractere=='>'){etat=13;}
+                 else if (caractere=='*'){etat=16;}
+                 else if (caractere=='/'){etat=17;}
+                 else if (caractere=='%') {etat=18;}
+                 else if (caractere=='&'){etat=19;}
+                else if (caractere=='('){etat=30;}
+                else if (caractere==')'){etat=31 ;}
+                 else {
+                   etat=21;}
 
-    currentToken = anallex();
+                break;
+            case 1 :
+                carsuivant();
+                if(isalpha(caractere)||isdigit(caractere))
+                {
+                    etat=1;
+                }
+                else
+                    etat=2;
+                break;
+            case 2 :
+                reculer(1);
+                int len =strlen(tablesSymboles[indiceALex].att);
+                if(caractere != '\n')
+                   tablesSymboles[indiceALex].att[len-1]='\0';
+                char* id= uniLexId( tablesSymboles[indiceALex].att);
+                tablesSymboles[indiceALex].ul=id;
+                tablesSymboles[indiceALex].num=indiceALex;
+                indiceALex++;
+                return id ;
+
+            case 3 :
+                carsuivant();
+
+                if(isdigit(caractere))
+                {
+                    etat=3;
+                }
+                else
+                    etat=4;
+                break;
+
+            case 4 :
+                reculer(1);
+                 len =strlen(tablesSymboles[indiceALex].att);
+                tablesSymboles[indiceALex].att[len-1]='\0';
+               ajouterTableSymboles("nb");
+
+                return "nb";
+            case 5 :
+                ajouterTableSymboles("opadd");
+                return "opadd";
+            case 6 :
+               ajouterTableSymboles("opadd");
+                return "opadd";
+            case 7 :
+                carsuivant();
+                if(caractere=='|')
+                    etat=23;
+                else
+                 {
+                     erreur("On doit avoir deux '|'");
+                     return;
+                 }
+                break;
+            case 8 :
+                ajouterTableSymboles("oprel");
+
+                return "oprel";
+            case 9 :
+                carsuivant();
+                if(caractere=='>')
+                    etat=10;
+                else if(caractere == '=')
+                    etat=11;
+                else
+                    etat=12;
+                break;
+            case 10:
+                ajouterTableSymboles("oprel");
+                return "oprel";
+            case 11:
+                 ajouterTableSymboles("oprel");
+                 return "oprel";
+            case 12:
+                 ajouterTableSymboles("oprel");
+                return "oprel";
+            case 13 :
+                carsuivant();
+
+                if(caractere=='=')
+                    etat=15;
+                else
+                {
+                    etat=14;
+                }
+                break;
+            case 14:
+                  ajouterTableSymboles("oprel");
+                 return "oprel";
+            case 15 :
+                 ajouterTableSymboles("oprel");
+                 return "oprel";
+            case 16 :
+                 ajouterTableSymboles("opmul");
+
+                 return "opmul";
+            case 17 :
+                ajouterTableSymboles("opmul");
+                 return "opmul";
+            case 18 :
+                ajouterTableSymboles("opmul");
+                 return "opmul";
+            case 19 :
+                carsuivant();
+                if(caractere=='&')
+                    etat=20;
+                else
+                {
+                    erreur("On doit avoir deux '&'");
+                    return;
+                }
+
+                break;
+            case 20 :
+                ajouterTableSymboles("opmul");
+                 return "opmul";
+            case 21 :
+                termine=1;
+                return "EOF";
+
+            case 23 :
+                ajouterTableSymboles("opadd");
+
+                return "opadd";
+            case 24 :
+                carsuivant();
+                if(caractere=='=')
+                    etat=27;
+                else
+                    etat=28;
+                break;
+            case 25 :
+                 ajouterTableSymboles("PVR");
+                 return ";";
+            case 26 :
+                ajouterTableSymboles("pt");
+                return ".";
+            case 27 :
+                ajouterTableSymboles("AFF");
+                 return ":=";
+            case 28 :
+                ajouterTableSymboles("DIP");
+                return ":";
+            case 29 :
+                ajouterTableSymboles("VR");
+                return ",";
+            case 30 :
+                ajouterTableSymboles("(");
+                return "(";
+             case 31 :
+                ajouterTableSymboles(")");
+                return ")";
+            default :
+                etat=22;
+
+
+        }
+
+    }
+}
+int compatible(char* a, char* b)
+{
+    if (strcmp(a, b) == 0)
+        return 0;
+    return 1;
+}
+
+
+void ajouter_type(char* typeS )
+{
+
+        int i=indiceALex-1;
+        while(i>limiteAjout)
+        {
+            if(tablesSymboles[i].ul!=NULL)
+            {
+               if(strcmp(tablesSymboles[i].ul ,"id")==0 && strcmp(tablesSymboles[i].att ,"id")!=0)
+                   {
+                        tabSem[taille].num=taille;
+                        tabSem[taille].type = typeS;
+                        strcpy(tabSem[taille].att,tablesSymboles[i].att);
+
+                        taille++;
+                    }
+            }
+            i--;
+        }
+      limiteAjout=indiceALex;
+
+}
+
+
+char* chercher_type(char* nomVar)
+{
+	int i;
+    for (i=0 ; i<taille;i++)
+   {
+       if(strcmp(tabSem[i].att,nomVar)== 0)
+        {
+            return tabSem[i].type;
+        }
+   }
+
+
+    return "erreur_de_type";
+}
+void emettre(const char *contenu) {
+
+
+    fprintf(fichier, "%s\n", contenu);
+
+}
+
+int main()
+{
+    f=fopen("test.txt","r");
+    fichier = fopen("codepile.txt", "a");
+
+
+    
     P();
 
-    fclose(file);
-    printf("Syntactic and Semantic Analysis Successful!\n");
-     fichierTraduction = fopen("traduction.txt", "w");
-    if (fichierTraduction == NULL) {
-        fprintf(stderr, "Erreur : impossible d'ouvrir le fichier de traduction.\n");
-        return 1;
-    }
+    fclose(fichier);
+    fclose(f);
 
-    emettre(fichierTraduction, "Début de la traduction\n");
-    // Ajoutez ici les appels à emettre pour écrire les traductions
-    emettre(fichierTraduction, "Fin de la traduction\n");
 
-    fclose(fichierTraduction);
+
     return 0;
 }
